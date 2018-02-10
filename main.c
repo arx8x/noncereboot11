@@ -1,3 +1,15 @@
+//    This is originally created by @stek29(full credits to him) and I, ARX8x only modified parts of it
+//    to make it work with my tweak, System Info
+//    Changes
+//    - removed help instructions for user
+//    - 0 args = print generator
+//    - first arg is considered as input generator to be set
+//    - added generator validation
+//    - everything goes to stdout
+//    - added setuid patch for electra jailbreak
+
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -6,17 +18,11 @@
 #include "nonce.h"
 #include "kutils.h"
 #include "debug.h"
+#include <CoreFoundation/CoreFoundation.h>
+bool DO_PATCHES;
+bool DID_UNLOCK_NVRAM;
 #define FLAG_PLATFORMIZE (1 << 1)
-void printusage(void) {
-    printf("-h this message\n");
-    printf("-q stay quiet\n");
-    printf("-v be more verbose\n");
-    printf("-V even more verbose\n");
-    printf("-U skip unlocking nvram\n");
-    printf("-g print generator (when combined with s/d prints twice)\n");
-    printf("-s [val] set generator (WARNING: NO VALIDATION PERFORMED)\n");
-    printf("-d delete generator (conflicts with s)\n");
-}
+
 
 
 void patch_setuid()
@@ -24,7 +30,7 @@ void patch_setuid()
     void* handle = dlopen("/usr/lib/libjailbreak.dylib", RTLD_LAZY);
     if (!handle)
     {
-        ERROR("Couldn't get libjb : %s", dlerror());
+        printf("Couldn't get libjb : %s\n", dlerror());
         return;
     }
     
@@ -36,7 +42,7 @@ void patch_setuid()
     const char *dlsym_error = dlerror();
     if (dlsym_error)
     {
-        ERROR("sym error");
+        printf("sym error\n");
         return;
     }
     
@@ -44,126 +50,94 @@ void patch_setuid()
     ptr(getpid());
 }
 
-int gethelper(int setdel) {
-    char *gen = getgen();
-    if (gen != NULL) {
-        printf("generator:%s\n", gen);
-        free(gen);
-    } else {
-        printf("nonce_not_set\n");
-        if (!setdel) {
-            return 1;
-        }
-    }
-    
-    return 0;
-}
 
-int main(int argc, char *argv[]) {
-    int get, set, del;
-    char *gentoset = NULL;
-    get = set = del = 0;
-    
-    int nounlock = 0;
-    
-    char c;
-    while ((c = getopt(argc, argv, "hqvVUrgds:")) != -1) {
-        switch (c) {
-            case 'h':
-                printusage();
-                return EXIT_SUCCESS;
-                
-            case 'q':
-                loglevel = lvlNONE;
-                break;
-            case 'v':
-                loglevel = lvlINFO;
-                break;
-            case 'V':
-                loglevel = lvlDEBUG;
-                break;
-                
-            case 'U':
-                nounlock = 1;
-                break;
-                
-            case 'g':
-                get = 1;
-                break;
-                
-            case 'd':
-                del = 1;
-                break;
-                
-            case 's':
-                set = 1;
-                gentoset = optarg;
-                break;
-                
-            case '?':
-                ERROR("Unknown option `-%c'", optopt);
-                break;
-                
-            default:
-                abort();
-        }
-    }
-    
-    if (!(get || set || del)) {
-        ERROR("please specify g or s or d flag");
-        printusage();
-        return EXIT_FAILURE;
-    }
-    
-    if (set && del) {
-        ERROR("cant set and delete nonce at once");
-        return EXIT_FAILURE;
-    }
-    
-//    platformizeme();
-    patch_setuid();
-    if(setuid(0))
-    {
-        ERROR("Failed to get uid 0");
-    }
-    
-    if (init_tfpzero()) {
-        ERROR("failed to init tfpzero");
-        return EXIT_FAILURE;
-    }
-    
+
+int main(int argc, char *argv[])
+{
+    DO_PATCHES = (kCFCoreFoundationVersionNumber > 1348.22);
+    DID_UNLOCK_NVRAM = false;
     int retval = EXIT_SUCCESS;
     
-    if (!nounlock) {
+    if(DO_PATCHES)
+    {
 
-        if (unlocknvram()) {
-            ERROR("failed to unlock nvram, but trying anyway");
+        patch_setuid();
+
+        if(setuid(0))
+        {
+            printf("Failed to get uid 0\n");
+        }
+        
+        
+        
+        if (init_tfpzero())
+        {
+            printf("failed to init tfpzero\n");
+            return EXIT_FAILURE;
+        }
+        
+        if (unlocknvram())
+        {
+            printf("Failed to unlock nvram\n");
+            return EXIT_FAILURE;
+        }
+        else
+        {
+            DID_UNLOCK_NVRAM = true;
         }
     }
     
-    if (get) {
-        retval = gethelper(set || del);
-        DEBUG("gethelper: %d", retval);
+    if(argc < 2)
+    {
+        char *gen = getgen();
+        if(gen != NULL)
+        {
+            printf("generator:%s\n", gen);
+            retval = EXIT_SUCCESS;
+        }
+        else
+        {
+            printf("Failed to read generator\n");
+            retval = EXIT_FAILURE;
+        }
+    }
+    else
+    {
+        const char *generator = argv[1];
+        char generatorToSet[22];
+        char compareString[22];
+        uint64_t rawGeneratorValue;
+        
+        sscanf(generator, "0x%16llx",&rawGeneratorValue);
+        sprintf(compareString, "0x%016llx", rawGeneratorValue);
+        
+        if(!strcmp(compareString, generator))
+        {
+            sprintf(generatorToSet, "0x%llx", rawGeneratorValue);
+            if(!setgen(generator))
+            {
+                printf("Success : %s\n", getgen());
+                retval = EXIT_SUCCESS;
+            }
+            else
+            {
+                printf("Failed to set generator\n");
+                retval = EXIT_FAILURE;
+            }
+        }
+        else
+        {
+            printf("Re-generated %s\n", compareString);
+            printf("Generator validation failed\n");
+            retval = EXIT_FAILURE;
+        }
     }
     
-    if (del) {
-        retval = delgen();
-        DEBUG("delgen: %d", retval);
-    }
-    
-    if (set) {
-        retval = setgen(gentoset);
-        DEBUG("setgen: %d", retval);
-    }
-    
-    if (get && (set || del)) {
-        retval = gethelper(set || del);
-        DEBUG("gethelper: %d", retval);
-    }
-    
-    if (!nounlock) {
-        if (locknvram()) {
-            ERROR("failed to unlock nvram, cant do much about it");
+    if(DID_UNLOCK_NVRAM)
+    {
+        if(unlocknvram())
+        {
+            printf("nvram was unlocked but failed to lock back. Please reboot to avoid system malfunction\n");
         }
     }
     

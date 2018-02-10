@@ -94,34 +94,17 @@ int makenapply(const char *key, const char *val) {
     return ret;
 }
 
-int setgen(const char *generator) {
+int setgen(const char *generator)
+{
     int ret = 0;
-    char generatorToSet[22];
-    char compareString[22];
-    uint64_t rawGeneratorValue;
-    sscanf(generator, "0x%16llx",&rawGeneratorValue);
-    sprintf(compareString, "0x%016llx", rawGeneratorValue);
-    if(!strcmp(compareString, generator))
-    {
-        sprintf(generatorToSet, "0x%llx", rawGeneratorValue);
-        ret = makenapply(kIONVRAMDeletePropertyKey, nonceKey);
-        
-        // set even if delete failed
-        ret = makenapply(nonceKey, generator);
-        ret = ret || makenapply(kIONVRAMForceSyncNowPropertyKey, nonceKey);
-        if(!ret)
-        {
-            printf("Success : %s\n", getgen());
-        }
-    }
-    else
-    {
-        printf("Re-generated %s\n", compareString);
-        printf("Generator validation failed\n");
-        ret = -1;
-    }
-
-
+    
+    ret = makenapply(kIONVRAMDeletePropertyKey, nonceKey);
+    
+    // set even if delete failed
+    ret = makenapply(nonceKey, generator);
+    ret = ret || makenapply(kIONVRAMForceSyncNowPropertyKey, nonceKey);
+    
+    return ret;
 
     return ret;
 }
