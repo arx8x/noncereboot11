@@ -135,7 +135,7 @@ int main(int argc, char *argv[])
     
     if(DID_UNLOCK_NVRAM)
     {
-        if(unlocknvram())
+        if(locknvram())
         {
             printf("nvram was unlocked but failed to lock back. Please reboot to avoid system malfunction\n");
         }
