@@ -82,7 +82,7 @@ size_t rkbuffer(uint64_t where, void *p, size_t size) {
         }
         rv = mach_vm_read_overwrite(tfpzero, where + offset, chunk, (mach_vm_address_t)p + offset, &sz);
         if (rv || sz == 0) {
-            ERROR("error on rkbuffer(0x%016llx)", (offset + where));
+//            ERROR("error on rkbuffer(0x%016llx)", (offset + where));
             break;
         }
         offset += sz;
