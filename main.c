@@ -54,7 +54,7 @@ void patch_setuid()
 
 int main(int argc, char *argv[])
 {
-    DO_PATCHES = (kCFCoreFoundationVersionNumber > 1348.22);
+    DO_PATCHES = (kCFCoreFoundationVersionNumber > 1349.70);
     DID_UNLOCK_NVRAM = false;
     int retval = EXIT_SUCCESS;
     
