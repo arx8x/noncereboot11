@@ -1,4 +1,3 @@
 #include "debug.h"
 
-int loglevel = lvlERROR;
-
+int loglevel = lvlNONE;
