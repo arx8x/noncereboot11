@@ -30,8 +30,6 @@ extern CFTypeRef MGCopyAnswer(CFStringRef key) WEAK_IMPORT_ATTRIBUTE;
 bool IS_ELECTRA = false;
 uint64_t boot_nonce_ref = 0;
 
-// uint64_t kbase, kslide;
-// pfinder_t pfinder;
 mach_port_t tfp0;
 
 void load_offsets()
@@ -134,8 +132,6 @@ void patch_setuid()
   ptr(getpid());
 }
 
-
-
 int main(int argc, char *argv[])
 {
   loglevel = lvlNONE;
@@ -156,6 +152,7 @@ int main(int argc, char *argv[])
     // printf("performing electra patches\n");
     if(IS_ELECTRA)
     {
+      printf("Patching setuid with libjailbreakd\n");
       patch_setuid();
       setuid(0); // Electra needs this to be called twice for some reason
     }
@@ -165,6 +162,7 @@ int main(int argc, char *argv[])
       printf("Failed to get uid 0\n");
     }
 
+    printf("Init tfp0\n");
     if(init_tfpzero())
     {
       printf("failed to init tfpzero\n");
@@ -172,10 +170,15 @@ int main(int argc, char *argv[])
     }
     // these offsets are for unc0ver and may only work for A11 and below
     // patching is different on A12
+    printf("load offsets\n");
     load_offsets();
+
+    printf("dimentio attempt\n");
     boot_nonce_ref = dimentio_find_os_string_addr();
     if(!boot_nonce_ref)
     {
+      uint64_t k_base = find_kernel_base();
+      printf("kbase(2): %llx\n", k_base);
       printf("dimentio: could not get the boot nonce os string address\n");
       printf("unlocking nvram\n");
       if(unlocknvram())
@@ -201,7 +204,6 @@ int main(int argc, char *argv[])
     if(boot_nonce_ref)
     {
       char generator_dimentio[2 * sizeof(uint64_t) + sizeof("0x")];
-      printf("%d\n", (2 * sizeof(uint64_t) + sizeof("0x")));
       size_t off = kread(boot_nonce_ref, &generator_dimentio, sizeof(generator_dimentio));
       printf("generator:%s\n", generator_dimentio);
       retval = EXIT_SUCCESS;
@@ -251,8 +253,6 @@ int main(int argc, char *argv[])
         {
           size_t off = kwrite(boot_nonce_ref, generator, strlen(generator));
           printf("Success :%s\n", generator);
-          printf("%ld\n", off);
-          printf("%ld\n", strlen(generator));
           retval = EXIT_SUCCESS;
         }
         else

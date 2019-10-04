@@ -1,13 +1,50 @@
-#include <CommonCrypto/CommonCrypto.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <mach-o/loader.h>
 #include <mach/mach.h>
 #include <sys/sysctl.h>
 #include "dimentio.h"
 
+kern_return_t
+mach_vm_allocate(vm_map_t, mach_vm_address_t *, mach_vm_size_t, int);
 
+kern_return_t
+mach_vm_write(vm_map_t, mach_vm_address_t, vm_offset_t, mach_msg_type_number_t);
 
-// static task_t tfp0 = MACH_PORT_NULL;
+kern_return_t
+mach_vm_read_overwrite(vm_map_t, mach_vm_address_t, mach_vm_size_t, mach_vm_address_t, mach_vm_size_t *);
+
+kern_return_t
+mach_vm_machine_attribute(vm_map_t, mach_vm_address_t, mach_vm_size_t, vm_machine_attribute_t, vm_machine_attribute_val_t *);
+
+kern_return_t
+mach_vm_deallocate(vm_map_t, mach_vm_address_t, mach_vm_size_t);
+
+kern_return_t
+IOObjectRelease(io_object_t);
+
+CFMutableDictionaryRef
+IOServiceMatching(const char *);
+
+io_service_t
+IOServiceGetMatchingService(mach_port_t, CFDictionaryRef);
+
+kern_return_t
+IOServiceOpen(io_service_t, task_port_t, uint32_t, io_connect_t *);
+
+kern_return_t
+IORegistryEntrySetCFProperty(io_registry_entry_t, CFStringRef, CFTypeRef);
+
+kern_return_t
+IOConnectCallStructMethod(io_connect_t, uint32_t, const void *, size_t, void *, size_t *);
+
+kern_return_t
+IOServiceClose(io_connect_t);
+
+extern const mach_port_t kIOMasterPortDefault;
+
+unsigned arm_pgshift;
+kaddr_t allproc, our_task;
+extern task_t tfp0;
 
 uint32_t
 extract32(uint32_t value, unsigned start, unsigned length) {
@@ -382,74 +419,106 @@ sync_nonce(io_service_t nvram_serv) {
 	return KERN_FAILURE;
 }
 
-void
-entangle_nonce(uint64_t nonce, const void *key) {
-	uint8_t entangled_nonce[SHA384_DIGEST_LENGTH];
-	uint64_t src[] = { 0, nonce }, dst[2];
-	size_t i, out_sz;
-
-	if(CCCrypt(kCCEncrypt, kCCAlgorithmAES128, 0, key, kCCKeySizeAES128, NULL, src, sizeof(src), dst, sizeof(dst), &out_sz) == kCCSuccess && out_sz == sizeof(dst)) {
-		CC_SHA384(dst, sizeof(dst), entangled_nonce);
-		printf("entangled_nonce: ");
-		for(i = 0; i < sizeof(entangled_nonce); ++i) {
-			printf("%02x", entangled_nonce[i]);
-		}
-		putchar('\n');
-	}
-}
-
-
-uint64_t dimentio_find_os_string_addr()
-{
+uint64_t
+dimentio_find_os_string_addr() {
 	kaddr_t boot_nonce_os_symbol, of_dict, os_string;
-	uint64_t string_ptr = 0;
+  kaddr_t string_ptr = 0;
 	io_service_t nonce_serv, nvram_serv;
-
-	if(init_arm_pgshift() == KERN_SUCCESS)
-	{
+	kaddr_t kbase, kslide;
+	pfinder_t pfinder;
+	if(init_arm_pgshift() == KERN_SUCCESS) {
 		printf("arm_pgshift: %u\n", arm_pgshift);
-		if((kbase = get_kbase(&kslide)))
-		{
-			printf("kbase: " KADDR_FMT "\n", kbase);
-			printf("kslide: " KADDR_FMT "\n", kslide);
-			if(pfinder_init(&pfinder, kbase) == KERN_SUCCESS)
-			{
-				if(pfinder_init_offsets(pfinder) == KERN_SUCCESS)
+		if(init_tfp0() == KERN_SUCCESS) {
+			printf("tfp0: 0x%" PRIx32 "\n", tfp0);
+			if((kbase = get_kbase(&kslide))) {
+				printf("kbase: " KADDR_FMT "\n", kbase);
+				printf("kslide: " KADDR_FMT "\n", kslide);
+				// task_info for tfp0 isn't implemented on Chimera but it makes kbase
+				// availble as an env for jailbreakd
+				// calculated kslide here is 0 and kbase is the static kbase
+				// jailbreakd gets slid kbase. slid kbase - static kbase = kslide
+				if(!kslide)
 				{
-					if(find_task(getpid(), &our_task) == KERN_SUCCESS)
+					CFURLRef jailbreakd_plist_url = CFURLCreateWithFileSystemPath(kCFAllocatorDefault, CFSTR("/Library/LaunchDaemons/jailbreakd.plist"), kCFURLPOSIXPathStyle, false);
+					if(jailbreakd_plist_url == NULL) return string_ptr;
+					if(!CFURLResourceIsReachable(jailbreakd_plist_url, NULL)) return string_ptr;
+
+					printf("Invalid kslide; attempting to read from Chimera env\n");
+
+					CFDataRef jailbread_plist_filedata;
+					bool read_err = CFURLCreateDataAndPropertiesFromResource(
+						kCFAllocatorDefault,
+						jailbreakd_plist_url,
+						&jailbread_plist_filedata,
+						NULL,
+						NULL,
+						NULL
+					);
+					CFRelease(jailbreakd_plist_url);
+					if(!read_err)
 					{
-						printf("our_task: " KADDR_FMT "\n", our_task);
-						if((nonce_serv = get_serv("AppleMobileApNonce")) != IO_OBJECT_NULL)
-						{
-							printf("nonce_serv: 0x%" PRIx32 "\n", nonce_serv);
-							if(nonce_generate(nonce_serv) == KERN_SUCCESS && get_boot_nonce_os_symbol(nonce_serv, &boot_nonce_os_symbol) == KERN_SUCCESS)
-							{
-								printf("boot_nonce_os_symbol: " KADDR_FMT "\n", boot_nonce_os_symbol);
-								if((nvram_serv = get_serv("IODTNVRAM")) != IO_OBJECT_NULL)
-								{
-									printf("nvram_serv: 0x%" PRIx32 "\n", nvram_serv);
-									if(get_of_dict(nvram_serv, &of_dict) == KERN_SUCCESS)
-									{
-										printf("of_dict: " KADDR_FMT "\n", of_dict);
-										if((os_string = lookup_key_in_os_dict(of_dict, boot_nonce_os_symbol)))
-										{
-											printf("os_string: " KADDR_FMT "\n", os_string);
-											if(kread_addr(os_string + OS_STRING_STRING_OFF, &string_ptr) == KERN_SUCCESS && string_ptr)
-											{
-												printf("string_ptr: " KADDR_FMT "\n", string_ptr);
+						return string_ptr;
+					}
+
+					CFPropertyListRef jailbreakd_plist_data = CFPropertyListCreateWithData(
+						kCFAllocatorDefault,
+						jailbread_plist_filedata,
+						kCFPropertyListImmutable,
+						NULL,
+						NULL
+					);
+
+					if(!jailbreakd_plist_data)
+					{
+						return string_ptr;
+					}
+					CFDictionaryRef env_dict = CFDictionaryGetValue(jailbreakd_plist_data, CFSTR("EnvironmentVariables"));
+					if(env_dict == NULL) return string_ptr;
+					const char * kbase_string = CFStringGetCStringPtr(CFDictionaryGetValue(env_dict, CFSTR("KernelBase")), kCFStringEncodingUTF8);
+					if(!strlen(kbase_string)) return string_ptr;
+					kaddr_t kbase_chimera = strtoull(kbase_string, NULL, 16);
+					if(!kbase_chimera) return string_ptr;
+					kslide = kbase_chimera - kbase;
+					if(kslide)
+					{
+						kbase = kbase_chimera;
+					}
+					printf("kbase: " KADDR_FMT "\n", kbase);
+					printf("kslide: " KADDR_FMT "\n", kslide);
+				}
+
+        if(!kslide) return string_ptr;
+				if(pfinder_init(&pfinder, kbase) == KERN_SUCCESS) {
+					if(pfinder_init_offsets(pfinder) == KERN_SUCCESS) {
+						if(find_task(getpid(), &our_task) == KERN_SUCCESS) {
+							printf("our_task: " KADDR_FMT "\n", our_task);
+							if((nonce_serv = get_serv("AppleMobileApNonce")) != IO_OBJECT_NULL) {
+								printf("nonce_serv: 0x%" PRIx32 "\n", nonce_serv);
+								if(get_boot_nonce_os_symbol(nonce_serv, &boot_nonce_os_symbol) == KERN_SUCCESS) {
+									printf("boot_nonce_os_symbol: " KADDR_FMT "\n", boot_nonce_os_symbol);
+									if((nvram_serv = get_serv("IODTNVRAM")) != IO_OBJECT_NULL) {
+										printf("nvram_serv: 0x%" PRIx32 "\n", nvram_serv);
+										if(get_of_dict(nvram_serv, &of_dict) == KERN_SUCCESS) {
+											printf("of_dict: " KADDR_FMT "\n", of_dict);
+											if((os_string = lookup_key_in_os_dict(of_dict, boot_nonce_os_symbol))) {
+												printf("os_string: " KADDR_FMT "\n", os_string);
+												if(kread_addr(os_string + OS_STRING_STRING_OFF, &string_ptr) == KERN_SUCCESS && string_ptr) {
+													printf("string_ptr: " KADDR_FMT "\n", string_ptr);
+												}
 											}
 										}
+										IOObjectRelease(nvram_serv);
 									}
-									IOObjectRelease(nvram_serv);
 								}
+								IOObjectRelease(nonce_serv);
 							}
-							IOObjectRelease(nonce_serv);
 						}
 					}
+					pfinder_term(&pfinder);
 				}
-				pfinder_term(&pfinder);
 			}
 		}
 	}
 	return string_ptr;
+
 }

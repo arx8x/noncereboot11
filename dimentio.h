@@ -112,9 +112,11 @@ IOServiceClose(io_connect_t);
 
 extern const mach_port_t kIOMasterPortDefault;
 
-unsigned arm_pgshift;
-kaddr_t allproc, our_task;
+// unsigned arm_pgshift;
+// kaddr_t allproc, our_task;
 
+
+kern_return_t kread_buf(kaddr_t addr, void *buf, mach_vm_size_t sz);
 
 kern_return_t init_tfp0(void);
 
@@ -133,3 +135,5 @@ kern_return_t sync_nonce(io_service_t nvram_serv);
 io_service_t get_serv(const char *name);
 
 uint64_t dimentio_find_os_string_addr();
+
+void d();
